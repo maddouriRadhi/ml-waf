@@ -518,7 +518,7 @@ For issues, questions, or contributions:
 
 - **GitHub Issues**: [Open an issue](https://github.com/AnisDh25/ML-WAF/issues)
 - **Discussions**: [Join our discussions](https://github.com/AnisDh25/ML-WAF/discussions)
-- **Email**: anis.dhahri@example.com
+- **Email**: anis.dhaoui@tek-up.de
 
 ## 🔗 Related Projects
 
