@@ -501,7 +501,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 **Anis Dhahri**  
 - GitHub: [@AnisDh25](https://github.com/AnisDh25)
-- Email: anis.dhahri@example.com
+- Email: anis.dhaoui@tek-up.de
 
 ## 🙏 Acknowledgments
 
