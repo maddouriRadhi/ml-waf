@@ -1,0 +1,114 @@
+{
+    "database": {
+        "type": "postgresql",
+        "host": "localhost",
+        "port": "5432",
+        "name": "waf_database",
+        "user": "postgres",
+        "password": "admin"
+    },
+    "proxy": {
+        "host": "127.0.0.1",
+        "port": 8085,
+        "enabled": true,
+        "username": "admin",
+        "password": "admin"
+    },
+    "backend": {
+        "host": "127.0.0.1",
+        "port": 8086,
+        "enabled": true
+    },
+    "content_filter": {
+        "enabled": true,
+        "blocked_patterns": [
+            "script",
+            "javascript:",
+            "vbscript:",
+            "onload=",
+            "onerror=",
+            "onclick=",
+            "onmouseover=",
+            "eval(",
+            "alert(",
+            "document.cookie",
+            "window.location",
+            "expression("
+        ],
+        "blocked_extensions": [
+            ".exe",
+            ".bat",
+            ".cmd",
+            ".scr",
+            ".pif",
+            ".com",
+            ".vbs"
+        ],
+        "max_url_length": 2048,
+        "blocked_methods": [
+            "TRACE",
+            "TRACK",
+            "DEBUG"
+        ],
+        "allowed_methods": [
+            "GET",
+            "POST",
+            "PUT",
+            "DELETE",
+            "HEAD",
+            "OPTIONS"
+        ]
+    },
+    "popup_blocker": {
+        "blocked_popup_triggers": [
+            "window.open",
+            "popup(",
+            "showModalDialog",
+            "alert(",
+            "confirm(",
+            "prompt("
+        ],
+        "blocked_attributes": [
+            "target=_blank",
+            "onclick",
+            "onload",
+            "onunload"
+        ]
+    },
+    "ml_classifier": {
+        "model_path": "models/waf_model.pkl",
+        "threshold": 0.7,
+        "features": [
+            "url_length",
+            "special_chars",
+            "suspicious_words",
+            "path_depth",
+            "query_params"
+        ]
+    },
+    "logging": {
+        "level": "INFO",
+        "file": "logs/waf.log",
+        "max_size": "10MB",
+        "backup_count": 5,
+        "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    },
+    "security": {
+        "rate_limit": {
+            "enabled": true,
+            "requests_per_minute": 100,
+            "burst_size": 20
+        },
+        "ip_whitelist": [
+            "127.0.0.1",
+            "::1"
+        ],
+        "blocked_ips": [],
+        "session_timeout": 3600
+    },
+    "dashboard": {
+        "refresh_interval": 5,
+        "max_log_entries": 1000,
+        "chart_data_points": 50
+    }
+}

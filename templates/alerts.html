@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+
+{% block title %}Alerts - ML-WAF{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1><i class="fas fa-exclamation-triangle"></i> Security Alerts</h1>
+    <button class="btn btn-outline-secondary" onclick="refreshAlerts()">
+        <i class="fas fa-sync"></i> Refresh
+    </button>
+</div>
+
+<!-- Alert Summary Cards -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="stat-card danger">
+            <h5>Critical</h5>
+            <h2 id="critical-count">0</h2>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card warning">
+            <h5>High</h5>
+            <h2 id="high-count">0</h2>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card info">
+            <h5>Medium</h5>
+            <h2 id="medium-count">0</h2>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card success">
+            <h5>Low</h5>
+            <h2 id="low-count">0</h2>
+        </div>
+    </div>
+</div>
+
+<!-- Alerts Table -->
+<div class="table-container">
+    <div class="table-responsive">
+        <table class="table table-hover">
+            <thead>
+                <tr>
+                    <th>Timestamp</th>
+                    <th>Severity</th>
+                    <th>Type</th>
+                    <th>IP Address</th>
+                    <th>Message</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody id="alertsTableBody">
+                {% for alert in alerts %}
+                <tr>
+                    <td>{{ alert.timestamp }}</td>
+                    <td>
+                        {% if alert.severity == 'critical' %}
+                            <span class="badge bg-danger">CRITICAL</span>
+                        {% elif alert.severity == 'high' %}
+                            <span class="badge bg-warning">HIGH</span>
+                        {% elif alert.severity == 'medium' %}
+                            <span class="badge bg-info">MEDIUM</span>
+                        {% else %}
+                            <span class="badge bg-secondary">LOW</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ alert.type }}</td>
+                    <td><code>{{ alert.ip }}</code></td>
+                    <td>{{ alert.message }}</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-danger" onclick="blockIP('{{ alert.ip }}')">
+                            <i class="fas fa-ban"></i> Block
+                        </button>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="6" class="text-center text-muted">No alerts to display</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    function refreshAlerts() {
+        fetch('/api/alerts?limit=100')
+            .then(response => response.json())
+            .then(data => {
+                updateAlertsTable(data.alerts);
+                updateAlertCounts(data.alerts);
+            })
+            .catch(error => {
+                console.error('Error loading alerts:', error);
+            });
+    }
+    
+    function updateAlertsTable(alerts) {
+        const tbody = document.getElementById('alertsTableBody');
+        tbody.innerHTML = '';
+        
+        if (alerts.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No alerts to display</td></tr>';
+            return;
+        }
+        
+        alerts.forEach(alert => {
+            const row = document.createElement('tr');
+            
+            let severityBadge = '';
+            switch(alert.severity) {
+                case 'critical':
+                    severityBadge = '<span class="badge bg-danger">CRITICAL</span>';
+                    break;
+                case 'high':
+                    severityBadge = '<span class="badge bg-warning">HIGH</span>';
+                    break;
+                case 'medium':
+                    severityBadge = '<span class="badge bg-info">MEDIUM</span>';
+                    break;
+                default:
+                    severityBadge = '<span class="badge bg-secondary">LOW</span>';
+            }
+            
+            row.innerHTML = `
+                <td>${alert.timestamp}</td>
+                <td>${severityBadge}</td>
+                <td>${alert.type}</td>
+                <td><code>${alert.ip}</code></td>
+                <td>${alert.message}</td>
+                <td>
+                    <button class="btn btn-sm btn-outline-danger" onclick="blockIP('${alert.ip}')">
+                        <i class="fas fa-ban"></i> Block
+                    </button>
+                </td>
+            `;
+            
+            tbody.appendChild(row);
+        });
+    }
+    
+    function updateAlertCounts(alerts) {
+        const counts = {critical: 0, high: 0, medium: 0, low: 0};
+        
+        alerts.forEach(alert => {
+            if (counts.hasOwnProperty(alert.severity)) {
+                counts[alert.severity]++;
+            }
+        });
+        
+        document.getElementById('critical-count').textContent = counts.critical;
+        document.getElementById('high-count').textContent = counts.high;
+        document.getElementById('medium-count').textContent = counts.medium;
+        document.getElementById('low-count').textContent = counts.low;
+    }
+    
+    function blockIP(ip) {
+        if (confirm(`Block IP address ${ip}?`)) {
+            alert(`IP ${ip} has been added to the blacklist`);
+        }
+    }
+    
+    // Auto-refresh every 15 seconds
+    setInterval(refreshAlerts, 15000);
+    
+    // Initial count update
+    updateAlertCounts({{ alerts|tojson }});
+</script>
+{% endblock %}

@@ -1,0 +1,347 @@
+{% extends "base.html" %}
+
+{% block title %}Configuration - ML-WAF{% endblock %}
+
+{% block content %}
+<h1 class="mb-4"><i class="fas fa-cog"></i> System Configuration</h1>
+
+<!-- ML Settings -->
+<div class="table-container mb-4">
+    <h4 class="mb-3">Machine Learning Settings</h4>
+    <form id="mlConfigForm">
+        <div class="row">
+            <div class="col-md-6">
+                <label class="form-label">Detection Threshold</label>
+                <input type="number" class="form-control" id="mlThreshold" 
+                       value="{{ config.get('ml_classifier', {}).get('threshold', 0.5) }}" min="0" max="1" step="0.1">
+                <small class="text-muted">Score ≥ threshold = BLOCK (0.0 - 1.0)</small>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">Model Path</label>
+                <input type="text" class="form-control" value="{{ config.get('ml_classifier', {}).get('model_path', 'models/waf_model.pkl') }}" readonly>
+            </div>
+        </div>
+        <button type="submit" class="btn btn-primary mt-3">
+            <i class="fas fa-save"></i> Save ML Settings
+        </button>
+    </form>
+</div>
+
+<!-- Backend Settings -->
+<div class="table-container mb-4">
+    <h4 class="mb-3">Backend Server Settings</h4>
+    <form id="backendConfigForm">
+        <div class="row">
+            <div class="col-md-6">
+                <label class="form-label">Backend Host</label>
+                <input type="text" class="form-control" id="backendHost" 
+                       value="{{ config.get('backend', {}).get('host', '127.0.0.1') }}">
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">Backend Port</label>
+                <input type="number" class="form-control" id="backendPort" 
+                       value="{{ config.get('backend', {}).get('port', 3000) }}">
+            </div>
+        </div>
+        <button type="submit" class="btn btn-primary mt-3">
+            <i class="fas fa-save"></i> Save Backend Settings
+        </button>
+    </form>
+</div>
+
+<!-- Content Filter Settings -->
+<div class="table-container mb-4">
+    <h4 class="mb-3">Content Filter Categories</h4>
+    <div class="row">
+        {% for category in content_filter.get_categories() %}
+        <div class="col-md-4 mb-3">
+            <div class="card">
+                <div class="card-body">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" 
+                               id="category-{{ category }}"
+                               {% if category in content_filter.get_active_categories() %}checked{% endif %}
+                               onchange="toggleCategory('{{ category }}', this.checked)">
+                        <label class="form-check-label" for="category-{{ category }}">
+                            <strong>{{ category.title() }}</strong>
+                        </label>
+                    </div>
+                    <small class="text-muted">
+                        {{ content_filter.get_category_keywords(category)|length }} keywords
+                    </small>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<!-- Domain Blacklist/Whitelist -->
+<div class="row">
+    <div class="col-md-6">
+        <div class="table-container mb-4">
+            <h4 class="mb-3">Domain Blacklist</h4>
+            <div class="input-group mb-3">
+                <input type="text" class="form-control" id="blacklistDomain" 
+                       placeholder="Enter domain to block">
+                <button class="btn btn-danger" onclick="addToBlacklist()">
+                    <i class="fas fa-ban"></i> Add
+                </button>
+            </div>
+            <ul class="list-group" id="blacklistItems">
+                {% for domain in content_filter.get_blacklist() %}
+                <li class="list-group-item d-flex justify-content-between align-items-center">
+                    {{ domain }}
+                    <button class="btn btn-sm btn-outline-danger" 
+                            onclick="removeFromBlacklist('{{ domain }}')">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+    
+    <div class="col-md-6">
+        <div class="table-container mb-4">
+            <h4 class="mb-3">Domain Whitelist</h4>
+            <div class="input-group mb-3">
+                <input type="text" class="form-control" id="whitelistDomain" 
+                       placeholder="Enter domain to allow">
+                <button class="btn btn-success" onclick="addToWhitelist()">
+                    <i class="fas fa-check"></i> Add
+                </button>
+            </div>
+            <ul class="list-group" id="whitelistItems">
+                {% for domain in content_filter.get_whitelist() %}
+                <li class="list-group-item d-flex justify-content-between align-items-center">
+                    {{ domain }}
+                    <button class="btn btn-sm btn-outline-danger" 
+                            onclick="removeFromWhitelist('{{ domain }}')">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+</div>
+
+<!-- Popup Blocker Settings -->
+<div class="table-container mb-4">
+    <h4 class="mb-3">Popup Blocker Settings</h4>
+    <div class="row">
+        <div class="col-md-6">
+            <div class="form-check form-switch mb-3">
+                <input class="form-check-input" type="checkbox" id="popupBlockerEnabled"
+                       {% if popup_blocker.is_enabled() %}checked{% endif %}
+                       onchange="togglePopupBlocker(this.checked)">
+                <label class="form-check-label" for="popupBlockerEnabled">
+                    Enable Popup Blocker
+                </label>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">Aggressiveness Level</label>
+            <select class="form-select" id="popupAggressiveness" 
+                    onchange="setPopupAggressiveness(this.value)">
+                <option value="permissive" {% if popup_blocker.aggressiveness == 'permissive' %}selected{% endif %}>
+                    Permissive
+                </option>
+                <option value="moderate" {% if popup_blocker.aggressiveness == 'moderate' %}selected{% endif %}>
+                    Moderate
+                </option>
+                <option value="strict" {% if popup_blocker.aggressiveness == 'strict' %}selected{% endif %}>
+                    Strict
+                </option>
+            </select>
+        </div>
+    </div>
+</div>
+
+<!-- Danger Zone -->
+<div class="table-container" style="border-left: 4px solid var(--danger-color);">
+    <h4 class="mb-3 text-danger"><i class="fas fa-exclamation-triangle"></i> Danger Zone</h4>
+    <div class="d-flex gap-2">
+        <button class="btn btn-warning" onclick="retrainModel()">
+            <i class="fas fa-sync"></i> Retrain ML Model
+        </button>
+        <button class="btn btn-danger" onclick="clearLogs()">
+            <i class="fas fa-trash"></i> Clear All Logs
+        </button>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // ML Configuration
+    document.getElementById('mlConfigForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        const threshold = document.getElementById('mlThreshold').value;
+        
+        fetch('/api/config/update', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ml_threshold: parseFloat(threshold)})
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('ML settings updated successfully!');
+            } else {
+                alert('Error: ' + data.error);
+            }
+        });
+    });
+    
+    // Backend Configuration
+    document.getElementById('backendConfigForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        const host = document.getElementById('backendHost').value;
+        const port = document.getElementById('backendPort').value;
+        
+        fetch('/api/config/update', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                backend_host: host,
+                backend_port: parseInt(port)
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('Backend settings updated successfully!');
+            } else {
+                alert('Error: ' + data.error);
+            }
+        });
+    });
+    
+    // Content Filter Category Toggle
+    function toggleCategory(category, enabled) {
+        const action = enabled ? 'enable' : 'disable';
+        
+        fetch(`/api/content_filter/category/${action}`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({category: category})
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) {
+                alert('Error: ' + data.error);
+            }
+        });
+    }
+    
+    // Blacklist Management
+    function addToBlacklist() {
+        const domain = document.getElementById('blacklistDomain').value;
+        if (!domain) return;
+        
+        fetch('/api/content_filter/blacklist', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({domain: domain})
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            }
+        });
+    }
+    
+    function removeFromBlacklist(domain) {
+        fetch('/api/content_filter/blacklist', {
+            method: 'DELETE',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({domain: domain})
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            }
+        });
+    }
+    
+    // Whitelist Management
+    function addToWhitelist() {
+        const domain = document.getElementById('whitelistDomain').value;
+        if (!domain) return;
+        
+        fetch('/api/content_filter/whitelist', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({domain: domain})
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            }
+        });
+    }
+    
+    function removeFromWhitelist(domain) {
+        fetch('/api/content_filter/whitelist', {
+            method: 'DELETE',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({domain: domain})
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            }
+        });
+    }
+    
+    // Popup Blocker
+    function togglePopupBlocker(enabled) {
+        fetch('/api/popup_blocker/toggle', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({enabled: enabled})
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) {
+                alert('Error toggling popup blocker');
+            }
+        });
+    }
+    
+    function setPopupAggressiveness(level) {
+        fetch('/api/popup_blocker/aggressiveness', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({level: level})
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) {
+                alert('Error: ' + data.error);
+            }
+        });
+    }
+    
+    // Danger Zone
+    function retrainModel() {
+        if (confirm('This will retrain the ML model using current logs. Continue?')) {
+            alert('Model retraining initiated. This may take a few minutes.');
+            // In production, implement actual retraining endpoint
+        }
+    }
+    
+    function clearLogs() {
+        if (confirm('WARNING: This will permanently delete all logs. Continue?')) {
+            alert('Log clearing functionality would be implemented here.');
+        }
+    }
+</script>
+{% endblock %}

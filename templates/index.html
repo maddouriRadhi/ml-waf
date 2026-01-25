@@ -1,0 +1,495 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - ML-WAF{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1><i class="fas fa-chart-line"></i> Dashboard Overview</h1>
+    <div>
+        <span id="system-status" class="badge bg-success">System Online</span>
+        <span id="last-update" class="badge bg-secondary ms-2">Updating...</span>
+    </div>
+</div>
+
+<!-- Real-time Alerts -->
+<div id="alerts-container" class="row mb-4" style="display: none;">
+    <div class="col-12">
+        <div class="alert alert-warning alert-dismissible fade show" role="alert">
+            <i class="fas fa-exclamation-triangle me-2"></i>
+            <span id="alert-message">Loading alerts...</span>
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+    </div>
+</div>
+
+<!-- Statistics Cards -->
+<div class="row">
+    <div class="col-md-3">
+        <div class="stat-card info hover-card">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <p class="text-muted mb-1">Total Requests</p>
+                    <h3 id="total-requests" class="animated-number">{{ stats.total_requests }}</h3>
+                    <small class="text-success"><i class="fas fa-arrow-up"></i> <span id="requests-change">+0</span> today</small>
+                </div>
+                <i class="fas fa-globe fa-3x text-primary pulse-icon"></i>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3">
+        <div class="stat-card danger hover-card">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <p class="text-muted mb-1">Blocked Requests</p>
+                    <h3 id="blocked-requests" class="text-danger animated-number">{{ stats.blocked_requests }}</h3>
+                    <small class="text-danger"><i class="fas fa-arrow-up"></i> <span id="blocked-change">+0</span> today</small>
+                </div>
+                <i class="fas fa-ban fa-3x text-danger pulse-icon"></i>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3">
+        <div class="stat-card warning hover-card">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <p class="text-muted mb-1">High Risk</p>
+                    <h3 id="high-risk" class="text-warning animated-number">{{ stats.high_risk_requests }}</h3>
+                    <small class="text-warning"><i class="fas fa-exclamation-triangle"></i> <span id="risk-change">+0</span> today</small>
+                </div>
+                <i class="fas fa-exclamation-circle fa-3x text-warning pulse-icon"></i>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3">
+        <div class="stat-card success hover-card">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <p class="text-muted mb-1">Block Rate</p>
+                    <h3 id="block-rate" class="text-success animated-number">{{ "%.1f"|format(stats.block_rate) }}%</h3>
+                    <small class="text-muted">Last 30 days</small>
+                </div>
+                <i class="fas fa-chart-pie fa-3x text-success pulse-icon"></i>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Charts -->
+<div class="row mt-4">
+    <div class="col-md-8">
+        <div class="table-container">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h4><i class="fas fa-chart-area"></i> Traffic Overview (24h)</h4>
+                <div class="btn-group" role="group">
+                    <button type="button" class="btn btn-sm btn-outline-primary active" onclick="updateTrafficChart('24h')">24h</button>
+                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="updateTrafficChart('7d')">7d</button>
+                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="updateTrafficChart('30d')">30d</button>
+                </div>
+            </div>
+            <canvas id="trafficChart" height="80"></canvas>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="table-container">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h4><i class="fas fa-pie-chart"></i> Attack Types</h4>
+                <button class="btn btn-sm btn-outline-secondary" onclick="refreshAttackChart()">
+                    <i class="fas fa-sync-alt"></i>
+                </button>
+            </div>
+            <canvas id="attackChart"></canvas>
+            <div class="mt-3">
+                <small class="text-muted">Most common: <strong id="top-attack-type">Loading...</strong></small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Recent Activity & Top Blocked IPs -->
+<div class="row mt-4">
+    <div class="col-md-6">
+        <div class="table-container">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h4><i class="fas fa-clock"></i> Recent Activity</h4>
+                <button class="btn btn-sm btn-outline-primary" onclick="refreshActivity()">
+                    <i class="fas fa-sync-alt"></i> Refresh
+                </button>
+            </div>
+            <div id="recent-activity" class="activity-feed">
+                <div class="text-center text-muted py-3">
+                    <i class="fas fa-spinner fa-spin"></i> Loading recent activity...
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6">
+        <div class="table-container">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h4><i class="fas fa-users-slash"></i> Top Blocked IP Addresses</h4>
+                <button class="btn btn-sm btn-outline-primary" onclick="refreshTopIPs()">
+                    <i class="fas fa-sync-alt"></i> Refresh
+                </button>
+            </div>
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Rank</th>
+                        <th>IP Address</th>
+                        <th>Blocked Requests</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="top-ips">
+                    {% for item in stats.top_blocked_ips %}
+                    <tr>
+                        <td>{{ loop.index }}</td>
+                        <td><code>{{ item.ip }}</code></td>
+                        <td><span class="badge bg-danger">{{ item.count }}</span></td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-danger" onclick="blockIP('{{ item.ip }}')">
+                                <i class="fas fa-ban"></i> Block
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Traffic Chart
+    const trafficCtx = document.getElementById('trafficChart').getContext('2d');
+    
+    fetch('/api/chart/traffic')
+        .then(response => response.json())
+        .then(data => {
+            new Chart(trafficCtx, {
+                type: 'line',
+                data: {
+                    labels: data.labels,
+                    datasets: [{
+                        label: 'Legitimate Traffic',
+                        data: data.legitimate,
+                        borderColor: 'rgb(39, 174, 96)',
+                        backgroundColor: 'rgba(39, 174, 96, 0.1)',
+                        tension: 0.4
+                    }, {
+                        label: 'Blocked Traffic',
+                        data: data.blocked,
+                        borderColor: 'rgb(231, 76, 60)',
+                        backgroundColor: 'rgba(231, 76, 60, 0.1)',
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        });
+    
+    // Attack Types Chart
+    const attackCtx = document.getElementById('attackChart').getContext('2d');
+    
+    fetch('/api/chart/attacks')
+        .then(response => response.json())
+        .then(data => {
+            new Chart(attackCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: data.labels,
+                    datasets: [{
+                        data: data.data,
+                        backgroundColor: [
+                            'rgb(231, 76, 60)',
+                            'rgb(52, 152, 219)',
+                            'rgb(155, 89, 182)',
+                            'rgb(243, 156, 18)',
+                            'rgb(26, 188, 156)'
+                        ]
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: {
+                            position: 'bottom'
+                        }
+                    }
+                });
+                
+                // Update most common attack type
+                const maxIndex = data.data.indexOf(Math.max(...data.data));
+                document.getElementById('top-attack-type').textContent = data.labels[maxIndex];
+            });
+    }
+    
+    // Update traffic chart based on time range
+    function updateTrafficChart(timeRange) {
+        // Update button states
+        document.querySelectorAll('.btn-group button').forEach(btn => {
+            btn.classList.remove('active');
+        });
+        event.target.classList.add('active');
+        
+        // Here you would fetch different data based on timeRange
+        // For now, we'll simulate with the same data
+        console.log(`Updating traffic chart for ${timeRange}`);
+        
+        // Add visual feedback
+        showNotification(`Loading ${timeRange} traffic data...`, 'info');
+    }
+    
+    // Refresh attack chart
+    function refreshAttackChart() {
+        const btn = event.target;
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+        
+        fetch('/api/chart/attacks')
+            .then(response => response.json())
+            .then(data => {
+                attackChart.data.datasets[0].data = data.data;
+                attackChart.data.labels = data.labels;
+                attackChart.update();
+                
+                const maxIndex = data.data.indexOf(Math.max(...data.data));
+                document.getElementById('top-attack-type').textContent = data.labels[maxIndex];
+            })
+            .finally(() => {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-sync-alt"></i>';
+            });
+    }
+    
+    // Load recent activity
+    function refreshActivity() {
+        const container = document.getElementById('recent-activity');
+        container.innerHTML = '<div class="text-center text-muted py-3"><i class="fas fa-spinner fa-spin"></i> Loading recent activity...</div>';
+        
+        fetch('/api/logs?limit=10')
+            .then(response => response.json())
+            .then(data => {
+                const logs = data.logs || [];
+                if (logs.length === 0) {
+                    container.innerHTML = '<div class="text-center text-muted py-3">No recent activity</div>';
+                    return;
+                }
+                
+                container.innerHTML = logs.map(log => `
+                    <div class="activity-item d-flex justify-content-between align-items-center py-2 border-bottom">
+                        <div class="d-flex align-items-center">
+                            <i class="fas fa-${getActivityIcon(log.decision)} me-2 text-${getActivityColor(log.decision)}"></i>
+                            <div>
+                                <div class="fw-bold">${log.method} ${log.url}</div>
+                                <small class="text-muted">${log.ip} • ${formatTime(log.timestamp)}</small>
+                            </div>
+                        </div>
+                        <span class="badge bg-${getActivityColor(log.decision)}">${log.decision}</span>
+                    </div>
+                `).join('');
+            })
+            .catch(error => {
+                container.innerHTML = '<div class="text-center text-danger py-3">Error loading activity</div>';
+            });
+    }
+    
+    // Load top blocked IPs
+    function refreshTopIPs() {
+        const tbody = document.getElementById('top-ips');
+        tbody.innerHTML = '<tr><td colspan="4" class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading...</td></tr>';
+        
+        // This would ideally be a new API endpoint
+        fetch('/api/stats')
+            .then(response => response.json())
+            .then(data => {
+                const topIPs = data.top_blocked_ips || [];
+                if (topIPs.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">No blocked IPs</td></tr>';
+                    return;
+                }
+                
+                tbody.innerHTML = topIPs.map((item, index) => `
+                    <tr>
+                        <td>${index + 1}</td>
+                        <td><code>${item.ip}</code></td>
+                        <td><span class="badge bg-danger">${item.count}</span></td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-danger" onclick="blockIP('${item.ip}')">
+                                <i class="fas fa-ban"></i> Block
+                            </button>
+                        </td>
+                    </tr>
+                `).join('');
+            });
+    }
+    
+    // Helper functions
+    function getActivityIcon(decision) {
+        if (decision.includes('BLOCKED')) return 'ban';
+        if (decision.includes('LEGITIMATE')) return 'check-circle';
+        return 'question-circle';
+    }
+    
+    function getActivityColor(decision) {
+        if (decision.includes('BLOCKED')) return 'danger';
+        if (decision.includes('LEGITIMATE')) return 'success';
+        return 'secondary';
+    }
+    
+    function formatTime(timestamp) {
+        const date = new Date(timestamp);
+        return date.toLocaleTimeString();
+    }
+    
+    // Animate number changes
+    function animateNumber(elementId, newValue) {
+        const element = document.getElementById(elementId);
+        const currentValue = parseInt(element.textContent) || 0;
+        const increment = newValue - currentValue;
+        const duration = 1000;
+        const steps = 20;
+        const stepValue = increment / steps;
+        let currentStep = 0;
+        
+        const interval = setInterval(() => {
+            currentStep++;
+            const progress = currentStep / steps;
+            const easeProgress = 1 - Math.pow(1 - progress, 3); // Ease out cubic
+            element.textContent = Math.round(currentValue + stepValue * currentStep * easeProgress);
+            
+            if (currentStep >= steps) {
+                clearInterval(interval);
+                element.textContent = newValue;
+            }
+        }, duration / steps);
+    }
+    
+    // Show real-time alerts
+    function checkForAlerts() {
+        fetch('/api/alerts?limit=5')
+            .then(response => response.json())
+            .then(data => {
+                const alerts = data.alerts || [];
+                const recentAlerts = alerts.filter(alert => {
+                    const alertTime = new Date(alert.timestamp);
+                    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+                    return alertTime > fiveMinutesAgo;
+                });
+                
+                if (recentAlerts.length > 0) {
+                    const container = document.getElementById('alerts-container');
+                    const message = document.getElementById('alert-message');
+                    
+                    container.style.display = 'block';
+                    message.textContent = `${recentAlerts.length} new security alert${recentAlerts.length > 1 ? 's' : ''} in the last 5 minutes`;
+                }
+            });
+    }
+    
+    // Auto-refresh statistics every 5 seconds
+    setInterval(() => {
+        fetch('/api/stats')
+            .then(response => response.json())
+            .then(data => {
+                // Animate number changes
+                if (previousStats) {
+                    animateNumber('total-requests', data.total_requests);
+                    animateNumber('blocked-requests', data.blocked_requests);
+                    animateNumber('high-risk', data.high_risk_requests);
+                    document.getElementById('block-rate').textContent = data.block_rate.toFixed(1) + '%';
+                    
+                    // Update change indicators
+                    const requestsChange = data.total_requests - previousStats.total_requests;
+                    const blockedChange = data.blocked_requests - previousStats.blocked_requests;
+                    const riskChange = data.high_risk_requests - previousStats.high_risk_requests;
+                    
+                    document.getElementById('requests-change').textContent = `${requestsChange >= 0 ? '+' : ''}${requestsChange}`;
+                    document.getElementById('blocked-change').textContent = `${blockedChange >= 0 ? '+' : ''}${blockedChange}`;
+                    document.getElementById('risk-change').textContent = `${riskChange >= 0 ? '+' : ''}${riskChange}`;
+                } else {
+                    // First load
+                    document.getElementById('total-requests').textContent = data.total_requests;
+                    document.getElementById('blocked-requests').textContent = data.blocked_requests;
+                    document.getElementById('high-risk').textContent = data.high_risk_requests;
+                    document.getElementById('block-rate').textContent = data.block_rate.toFixed(1) + '%';
+                }
+                
+                previousStats = data;
+                
+                // Update last update time
+                document.getElementById('last-update').textContent = 'Updated ' + new Date().toLocaleTimeString();
+            });
+    }, 5000);
+    
+    // Check for alerts every 30 seconds
+    setInterval(checkForAlerts, 30000);
+    
+    // Block IP function
+    function blockIP(ip) {
+        if (confirm(`Are you sure you want to permanently block ${ip}?`)) {
+            fetch('/api/content_filter/blacklist', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ domain: ip })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showNotification(`IP ${ip} has been added to the blacklist`, 'success');
+                    refreshTopIPs();
+                } else {
+                    showNotification(`Failed to block IP: ${data.error}`, 'error');
+                }
+            });
+        }
+    }
+    
+    // Show notification
+    function showNotification(message, type) {
+        const notification = document.createElement('div');
+        notification.className = `alert alert-${type} alert-dismissible fade show position-fixed`;
+        notification.style.cssText = 'top: 20px; right: 20px; z-index: 9999; min-width: 300px;';
+        notification.innerHTML = `
+            ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+        document.body.appendChild(notification);
+        
+        setTimeout(() => {
+            if (notification.parentNode) {
+                notification.parentNode.removeChild(notification);
+            }
+        }, 5000);
+    }
+    
+    // Initialize everything on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        initializeCharts();
+        refreshActivity();
+        refreshTopIPs();
+        checkForAlerts();
+    });
+</script>
+{% endblock %}

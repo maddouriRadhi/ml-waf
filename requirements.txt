@@ -1,0 +1,33 @@
+# ML-WAF Requirements
+# Python 3.8+
+
+# Core Dependencies
+flask==2.3.0
+werkzeug==2.3.0
+
+# Machine Learning
+scikit-learn==1.3.0
+numpy==1.24.3
+pandas==2.0.3
+joblib==1.3.1
+
+# Database
+sqlite3  # Built-in with Python
+psycopg2-binary==2.9.7  # PostgreSQL adapter
+sqlalchemy==2.0.21  # ORM for database management
+
+# Logging
+python-dateutil==2.8.2
+
+# Security
+cryptography==41.0.3
+
+# Optional but recommended
+requests==2.31.0
+gunicorn==21.2.0  # For production deployment
+psutil==5.9.5  # For process monitoring
+
+# Development Tools (optional)
+pytest==7.4.0
+black==23.7.0
+flake8==6.1.0
