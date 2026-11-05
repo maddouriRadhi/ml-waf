@@ -104,67 +104,94 @@ class MLWAFProxy:
             self.server_socket.close()
         self.logger.info("ML-WAF Proxy stopped")
     
+    MAX_HEADER_BYTES = 65536
+    MAX_BODY_BYTES = 5 * 1024 * 1024
+
+    def _read_http_request(self, client_socket):
+        """Read one complete HTTP request: headers, then exactly Content-Length body bytes.
+        Returns (request_line, headers, body_bytes), None, or an error keyword."""
+        client_socket.settimeout(15)
+        data = b''
+        while b'\r\n\r\n' not in data:
+            chunk = client_socket.recv(4096)
+            if not chunk:
+                break
+            data += chunk
+            if len(data) > self.MAX_HEADER_BYTES:
+                return 'TOO_LARGE'
+        if not data:
+            return None
+        if b'\r\n\r\n' not in data:
+            return 'BAD'
+        head, _, body = data.partition(b'\r\n\r\n')
+        lines = head.decode('utf-8', errors='replace').split('\r\n')
+        request_line = lines[0].strip()
+        headers = {}
+        for line in lines[1:]:
+            if ':' in line:
+                key, value = line.split(':', 1)
+                headers[key.strip().lower()] = value.strip()
+        if 'chunked' in headers.get('transfer-encoding', '').lower():
+            return 'CHUNKED'
+        try:
+            length = int(headers.get('content-length', '0') or 0)
+        except ValueError:
+            return 'BAD'
+        if length < 0 or length > self.MAX_BODY_BYTES:
+            return 'TOO_LARGE'
+        while len(body) < length:
+            chunk = client_socket.recv(min(65536, length - len(body)))
+            if not chunk:
+                break
+            body += chunk
+        return request_line, headers, body[:length]
+
     def handle_client(self, client_socket, client_address):
         """Handle incoming client requests"""
         try:
-            # Receive request
-            request_data = client_socket.recv(4096).decode('utf-8')
-            if not request_data:
-                client_socket.close()
+            result = self._read_http_request(client_socket)
+            if result is None:
                 return
-            
-            # Parse HTTP request
-            request_lines = request_data.split('\n')
-            if len(request_lines) == 0:
-                client_socket.close()
+            if isinstance(result, str):
+                errors = {
+                    'TOO_LARGE': (413, 'Payload Too Large'),
+                    'CHUNKED': (411, 'Length Required'),
+                    'BAD': (400, 'Bad Request'),
+                }
+                code, message = errors.get(result, (400, 'Bad Request'))
+                self.send_error_response(client_socket, code, message)
                 return
-            
-            request_line = request_lines[0].strip()
+
+            request_line, headers, body_bytes = result
             parts = request_line.split(' ')
-            
             if len(parts) < 3:
                 self.send_bad_request(client_socket)
                 return
-            
+
             method, path, version = parts[0], parts[1], parts[2]
-            
-            # Extract headers and body
-            headers = {}
-            body = ''
-            body_started = False
-            
-            for line in request_lines[1:]:
-                line = line.strip()
-                if line == '':
-                    body_started = True
-                    continue
-                if ':' in line:
-                    key, value = line.split(':', 1)
-                    headers[key.strip().lower()] = value.strip()
-                else:
-                    body += line + '\n'
-            
+            body = body_bytes.decode('utf-8', errors='replace')
+
             src_ip = client_address[0]
             # Log the request
             self.logger.info(f"Request from {src_ip}: {method} {path}")
-            
+
             # Apply WAF filters and determine if should block
             should_block = self.should_block_request(method, path, body, headers, src_ip)
-            
+
             # If request should be blocked, apply blocking
             if should_block:
                 self.block_request(client_socket, method, path, client_address)
                 return
-            
-            # Forward to backend
-            self.forward_request(client_socket, method, path, headers, body)
-            
+
+            # Forward to backend (raw bytes, exactly as received)
+            self.forward_request(client_socket, method, path, headers, body_bytes)
+
         except Exception as e:
             self.logger.error(f"Error handling client {client_address}: {e}")
             self.send_error_response(client_socket, 500, "Internal Server Error")
         finally:
             client_socket.close()
-    
+
     def should_block_request(self, method, path, body, headers, src_ip):
         """Check if request should be blocked using trained WAF model"""
         try:
@@ -259,52 +286,79 @@ class MLWAFProxy:
         client_socket.send(response.encode('utf-8'))
         self.logger.warning(f"Blocked request sent to {client_address}: {method} {path}")
     
+    # Headers that must not be copied blindly from client to backend
+    _SKIP_REQUEST_HEADERS = {
+        'host', 'connection', 'keep-alive', 'content-length', 'accept-encoding',
+        'transfer-encoding', 'te', 'trailers', 'upgrade',
+        'proxy-authorization', 'proxy-authenticate',
+    }
+    # Headers that must not be copied blindly from backend to client
+    _SKIP_RESPONSE_HEADERS = {
+        'connection', 'keep-alive', 'transfer-encoding', 'content-length',
+        'content-encoding', 'set-cookie',
+    }
+
     def forward_request(self, client_socket, method, path, headers, body):
-        """Forward request to backend server"""
+        """Forward request to backend server and relay the response unchanged"""
         try:
-            # Construct backend URL
+            if isinstance(body, str):
+                body = body.encode('utf-8')
+
             url = f"http://{self.backend_host}:{self.backend_port}{path}"
-            
-            # Prepare headers for backend request
-            backend_headers = {}
-            for key, value in headers.items():
-                if key.lower() not in ['host', 'connection']:
-                    backend_headers[key] = value
-            
-            # Make request to backend
-            if method.upper() == 'GET':
-                response = requests.get(url, headers=backend_headers, timeout=10)
-            elif method.upper() == 'POST':
-                response = requests.post(url, headers=backend_headers, data=body, timeout=10)
-            elif method.upper() == 'PUT':
-                response = requests.put(url, headers=backend_headers, data=body, timeout=10)
-            elif method.upper() == 'DELETE':
-                response = requests.delete(url, headers=backend_headers, timeout=10)
-            else:
-                response = requests.request(method, url, headers=backend_headers, data=body, timeout=10)
-            
-            # Forward response to client
-            response_line = f"HTTP/1.1 {response.status_code} {response.reason}\r\n"
-            client_socket.send(response_line.encode('utf-8'))
-            
-            # Forward headers
+            # Keep the client's Host so the backend builds links/redirects that point
+            # back to the WAF, instead of to the unprotected backend port.
+            client_host = headers.get('host') or '127.0.0.1:8085'
+
+            backend_headers = {
+                key: value for key, value in headers.items()
+                if key.lower() not in self._SKIP_REQUEST_HEADERS
+            }
+            backend_headers['Host'] = client_host
+            backend_headers['Accept-Encoding'] = 'identity'
+
+            response = requests.request(
+                method, url,
+                headers=backend_headers,
+                data=body if body else None,
+                allow_redirects=False,   # the browser must follow redirects, with its cookies
+                timeout=30,
+            )
+
+            content = response.content
+            out = [f"HTTP/1.1 {response.status_code} {response.reason}\r\n"]
             for key, value in response.headers.items():
-                if key.lower() not in ['connection', 'transfer-encoding']:
-                    header_line = f"{key}: {value}\r\n"
-                    client_socket.send(header_line.encode('utf-8'))
-            
-            client_socket.send(b"\r\n")
-            
-            # Forward body
-            if response.content:
-                client_socket.send(response.content)
-            
+                lower = key.lower()
+                if lower in self._SKIP_RESPONSE_HEADERS:
+                    continue
+                if lower == 'location':
+                    value = value.replace(
+                        f"http://{self.backend_host}:{self.backend_port}", f"http://{client_host}")
+                out.append(f"{key}: {value}\r\n")
+
+            # One Set-Cookie line per cookie (a dict would merge them with commas)
+            try:
+                cookies = response.raw.headers.getlist('Set-Cookie')
+            except Exception:
+                cookies = []
+            for cookie in cookies:
+                out.append(f"Set-Cookie: {cookie}\r\n")
+
+            if method.upper() == 'HEAD':
+                out.append(f"Content-Length: {response.headers.get('content-length', '0')}\r\n")
+            else:
+                out.append(f"Content-Length: {len(content)}\r\n")
+            out.append("Connection: close\r\n\r\n")
+
+            client_socket.sendall(''.join(out).encode('utf-8', errors='replace'))
+            if method.upper() != 'HEAD' and content:
+                client_socket.sendall(content)
+
             self.logger.info(f"Forwarded {method} {path} -> {response.status_code}")
-            
+
         except Exception as e:
             self.logger.error(f"Error forwarding request: {e}")
             self.send_error_response(client_socket, 502, "Bad Gateway")
-    
+
     def send_bad_request(self, client_socket):
         """Send 400 Bad Request response"""
         response = (

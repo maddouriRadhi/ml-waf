@@ -16,7 +16,7 @@
     },
     "backend": {
         "host": "127.0.0.1",
-        "port": 8086,
+        "port": 8000,
         "enabled": true
     },
     "content_filter": {

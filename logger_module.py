@@ -80,6 +80,7 @@ class WAFLogger:
     def log_request(self, request_info, ml_score, decision):
         """Log a request to both CSV and database"""
         with self.lock:
+            ml_score = float(ml_score)  # numpy.float64 is not accepted by PostgreSQL
             timestamp = request_info.get('timestamp', datetime.now().isoformat())
             ip = request_info.get('ip', 'unknown')
             method = request_info.get('method', 'GET')
@@ -122,7 +123,7 @@ class WAFLogger:
                         # Get the returned ID
                         result = cursor.fetchone()
                         if result:
-                            inserted_id = result[0]
+                            inserted_id = result['id'] if isinstance(result, dict) else result[0]
                             self.logger.debug(f"Request logged with ID: {inserted_id}")
                         else:
                             self.logger.warning("Failed to get inserted ID")

@@ -6,7 +6,7 @@ Uses the same feature extraction as the training data
 import pickle
 import re
 import pandas as pd
-from urllib.parse import unquote
+from urllib.parse import unquote, unquote_plus
 
 class InitialWAFPredictor:
     """WAF Predictor using the initially trained model"""
@@ -30,6 +30,18 @@ class InitialWAFPredictor:
             self.model = self.model_data['model']
             self.threshold = self.model_data['threshold']
             self.feature_columns = self.model_data['feature_columns']
+
+            # Some pickles store raw class counts in the tree leaves, which makes
+            # predict_proba return values far above 1. Normalise in memory so the
+            # score is a real probability between 0 and 1.
+            try:
+                for est in getattr(self.model, 'estimators_', []):
+                    v = est.tree_.value
+                    s = v.sum(axis=(1, 2), keepdims=True)
+                    s[s == 0] = 1
+                    v /= s
+            except Exception as e:
+                print(f"Warning: could not normalise model probabilities: {e}")
             
             print(f"Model loaded successfully from {self.model_path}")
             print(f"Threshold: {self.threshold}")
@@ -44,7 +56,10 @@ class InitialWAFPredictor:
         features = {}
         
         # Combine path and body for analysis
-        full_content = path + ' ' + body
+        raw_content = path + ' ' + body
+        # Decode URL-encoding (twice, to also catch double-encoded payloads) so that
+        # %27%20OR%20%271%27... is analysed as the real attack string ' OR '1'...
+        full_content = unquote_plus(unquote_plus(raw_content))  # '+' is a space in forms/queries
         
         # Basic character counts (matching training data)
         features['single_q'] = full_content.count("'")
@@ -52,7 +67,7 @@ class InitialWAFPredictor:
         features['dashes'] = len(re.findall(r'-+', full_content))
         features['braces'] = full_content.count('{') + full_content.count('}')
         features['spaces'] = full_content.count(' ')
-        features['percentages'] = full_content.count('%')
+        features['percentages'] = raw_content.count('%')
         features['semicolons'] = full_content.count(';')
         features['angle_brackets'] = full_content.count('<') + full_content.count('>')
         
@@ -112,14 +127,68 @@ class InitialWAFPredictor:
             print(f"Error predicting request: {e}")
             return 0.0  # Default to safe (not malicious)
     
+    def _get_threshold(self):
+        """Threshold from config.json (ml_classifier.threshold) if set, else the model's own"""
+        try:
+            import json, os
+            cfg = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
+            with open(cfg, 'r', encoding='utf-8') as f:
+                value = json.load(f).get('ml_classifier', {}).get('threshold')
+            if value is not None:
+                return float(value)
+        except Exception:
+            pass
+        return self.threshold
+
     def is_malicious(self, method, path, body='', threshold=None):
         """Check if request is malicious based on threshold"""
         if threshold is None:
-            threshold = self.threshold
+            threshold = self._get_threshold()
         
+        if (method or '').upper() in ('POST', 'PUT', 'PATCH'):
+            return self._check_body_request(method, path, body, threshold)
+
         probability = self.predict_request(method, path, body)
         return probability > threshold, probability
     
+    # --- Requests with a body (forms) -------------------------------------------
+    # The model learned that "POST + body" is suspicious, so every normal login or
+    # registration form scores 0.80-0.87. For POST/PUT/PATCH we therefore:
+    #   1. remove password / CSRF-token values (random, never an injection vector here),
+    #   2. only block when the ML score is high AND a real attack signature is present.
+    _SENSITIVE_FIELD = re.compile(r'pass|pwd|token|csrf|secret', re.I)
+    _ATTACK_RE = re.compile(
+        r"""('\s*(or|and)\s+['"\d])"""
+        r"""|(\b(or|and)\b\s+['"]?\w+['"]?\s*=\s*['"]?\w+)"""
+        r"""|(\bunion\b.{0,40}\bselect\b)|(\bselect\b.{1,60}\bfrom\b)"""
+        r"""|(;\s*(drop|delete|insert|update|select)\b)|(\bdrop\s+(table|database)\b)"""
+        r"""|(--\s|--$|/\*|\*/|'\s*(--|#))|(\b(sleep|benchmark|waitfor)\b\s*[\(d])"""
+        r"""|(<\s*/?\s*(script|img|iframe|svg|body|object|embed)\b)|(javascript:)|(\bon\w{3,20}\s*=)"""
+        r"""|(\.\./)|(\.\.\\)|(etc/passwd)|(system32)|(boot\.ini)"""
+        r"""|(;\s*(cat|ls|id|whoami|wget|curl|nc|bash|sh|powershell)\b)|(\|\s*(cat|ls|id|whoami|nc|bash|sh)\b)"""
+        r"""|(\$\()|(`)|(cmd\.exe)|(/bin/(ba)?sh)|(%00)""",
+        re.I | re.S)
+
+    def _scrub_body(self, body):
+        """Blank out the value of password / token style fields in a form body"""
+        from urllib.parse import unquote_plus
+        parts = []
+        for piece in (body or '').strip().split('&'):
+            name, sep, _value = piece.partition('=')
+            if sep and self._SENSITIVE_FIELD.search(unquote_plus(name)):
+                piece = name + '='
+            parts.append(piece)
+        return '&'.join(parts)
+
+    def _check_body_request(self, method, path, body, threshold):
+        clean_body = self._scrub_body(body)
+        probability = self.predict_request(method, path, clean_body)
+        decoded = unquote_plus(unquote_plus(path + ' ' + clean_body))
+        if not self._ATTACK_RE.search(decoded):
+            # No attack signature: the high score only reflects the POST/body bias
+            return False, min(probability, 0.5)
+        return probability > threshold, probability
+
     def get_model_info(self):
         """Get model information"""
         if self.model_data:
